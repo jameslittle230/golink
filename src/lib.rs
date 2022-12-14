@@ -21,10 +21,16 @@ pub enum GolinkError {
     NoFirstPathSegment,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GolinkResolution {
+    MetadataRequest(String),
+    RedirectRequest(String),
+}
+
 pub fn resolve(
     input: &str,
     lookup: &dyn Fn(&str) -> Option<String>,
-) -> Result<String, GolinkError> {
+) -> Result<GolinkResolution, GolinkError> {
     let url = Url::parse(input)?;
     let mut segments = url.path_segments().unwrap();
     let short = segments
@@ -33,14 +39,24 @@ pub fn resolve(
         .to_ascii_lowercase()
         .replace('-', "");
 
+    if {
+        let this = &url.path().chars().last();
+        let f = |char| char == &'+';
+        matches!(this, Some(x) if f(x))
+    } {
+        return Ok(GolinkResolution::MetadataRequest(
+            short.trim_end_matches('+').to_owned(),
+        ));
+    }
+
     let remainder = segments.map(|s| s.to_owned()).collect_vec();
 
     let lookup_value = lookup(&short);
 
-    Ok(expand(
+    Ok(GolinkResolution::RedirectRequest(expand(
         &lookup_value.unwrap(),
         ExpandEnvironment { remainder },
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -57,18 +73,42 @@ mod tests {
     #[test]
     fn it_works() {
         let computed = resolve("http://go/test", &lookup);
-        assert_eq!(computed, Ok("http://example.com".to_string()))
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com".to_string()
+            ))
+        )
     }
 
     #[test]
     fn it_ignores_case() {
         let computed = resolve("http://go/TEST", &lookup);
-        assert_eq!(computed, Ok("http://example.com".to_string()))
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com".to_string()
+            ))
+        )
     }
 
     #[test]
     fn it_ignores_hyphens() {
         let computed = resolve("http://go/t-est", &lookup);
-        assert_eq!(computed, Ok("http://example.com".to_string()))
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_returns_metadata_request() {
+        let computed = resolve("http://go/test+", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::MetadataRequest("test".to_string()))
+        )
     }
 }
