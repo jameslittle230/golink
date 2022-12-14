@@ -27,10 +27,15 @@ pub fn resolve(
 ) -> Result<String, GolinkError> {
     let url = Url::parse(input)?;
     let mut segments = url.path_segments().unwrap();
-    let short = segments.next().ok_or(GolinkError::NoFirstPathSegment)?;
+    let short = segments
+        .next()
+        .ok_or(GolinkError::NoFirstPathSegment)?
+        .to_ascii_lowercase()
+        .replace('-', "");
+
     let remainder = segments.map(|s| s.to_owned()).collect_vec();
 
-    let lookup_value = lookup(short);
+    let lookup_value = lookup(&short);
 
     Ok(expand(
         &lookup_value.unwrap(),
@@ -42,16 +47,28 @@ pub fn resolve(
 mod tests {
     use super::*;
 
+    fn lookup(input: &str) -> Option<String> {
+        if input == "test" {
+            return Some("http://example.com".to_string());
+        }
+        None
+    }
+
     #[test]
     fn it_works() {
-        let lookup = |input: &str| {
-            if input == "test" {
-                return Some("http://example.com".to_string());
-            }
-            None
-        };
-
         let computed = resolve("http://go/test", &lookup);
+        assert_eq!(computed, Ok("http://example.com".to_string()))
+    }
+
+    #[test]
+    fn it_ignores_case() {
+        let computed = resolve("http://go/TEST", &lookup);
+        assert_eq!(computed, Ok("http://example.com".to_string()))
+    }
+
+    #[test]
+    fn it_ignores_hyphens() {
+        let computed = resolve("http://go/t-est", &lookup);
         assert_eq!(computed, Ok("http://example.com".to_string()))
     }
 }
