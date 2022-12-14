@@ -1,33 +1,130 @@
+//! # Golink
+//!
+//! The Golink crate is an engine for resolving URLs for link shortening services.
+//! You provide a link to expand and a function for mapping short URLs to long URLs,
+//! and this crate will:
+//!
+//! - **Normalize your input to ignore case and hyphenation**: `http://go/My-Service`
+//! and `http://go/myservice` are treated as the same input into your mapping function
+//!
+//! - **Append secondary paths to your resolved URL**: if your mapping function returns
+//! `http://example.com` for the given shortlink `foo`, then a request to `http://go/foo/bar/baz`
+//! will resolve to `http://example.com/foo/bar/baz`
+//!
+//! - **Apply templating, when applicable**: Using a simple templating language, your long URLs
+//! can powerfully place remaining path segments in your URL ad-hoc and provide a fallback
+//! value when there are no remaining path segments. For example, if your mapping function
+//! returns for the given shortlink `prs` the following URL:
+//!
+//!     ```text
+//!     https://github.com/pulls?q=is:open+is:pr+review-requested:{{ if path }}{ path }{{ else }}@me{{ endif }}+archived:false
+//!     ```
+//!
+//!     then a request to `http://go/prs` returns the URL to all Github PRs to which
+//!     you are assigned:
+//!
+//!     ```text
+//!     https://github.com/pulls?q=is:open+is:pr+review-requested:@me+archived:false
+//!     ```
+//!
+//!     and a request to `http://go/prs/jameslittle230` returns the URL to all
+//!     Github PRs to which I ([@jameslittle230](https://github.com/jameslittle230))
+//!     am assigned:
+//!
+//!     ```text
+//!     https://github.com/pulls?q=is:open+is:pr+review-requested:jameslittle230+archived:false
+//!     ```
+//!
+//! This resolver performs all the functionality described in [Tailscale's Golink
+//! project](https://tailscale.com/blog/golink/)
+//!
+//! This crate doesn't provide a web service or an interface for creating shortened links;
+//! it only provides an algorithm for resolving short URLs to long URLs.
+//!
+//! ## Usage
+//!
+//! The Golink crate doesn't care how you store or retrieve long URLs given a short URL;
+//! you can store them in memory, in a database, or on disk, as long as they are retrievable
+//! from within a closure you pass into the `resolve()` function:
+//!
+//! ```rust
+//! fn lookup(input: &str) -> Option<String> {
+//!     if input == "foo" {
+//!         return Some("http://example.com".to_string());
+//!     }
+//!     None
+//! }
+//!
+//! let resolved = golink::resolve("http://go/foo", &lookup)
+//!
+//! match computed {
+//!    Ok(GolinkResolution::RedirectRequest(url)) => {
+//!        // Redirect to `url`
+//!    }
+//!
+//!    Ok(GolinkResolution::MetadataRequest(key)) => {
+//!        // `key` is the original shortlink.
+//!        // Return JSON that displays metadata/analytics about `key`
+//!    }
+//!
+//!    Err(e) => {
+//!        // Return a 400 error to the user, with a message based on `e`
+//!    }
+//! }
+//! ```
+
 use itertools::Itertools;
+use serde::Serialize;
 use thiserror::Error;
+use tinytemplate::TinyTemplate;
 use url::{ParseError, Url};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct ExpandEnvironment {
-    remainder: Vec<String>,
+    path: String,
 }
 
-fn expand(input: &str, environment: ExpandEnvironment) -> String {
-    let mut url = Url::parse(input).unwrap();
+fn expand(input: &str, environment: ExpandEnvironment) -> Result<String, GolinkError> {
+    let mut tt = TinyTemplate::new();
+    tt.add_template("url_input", input)?;
+    let rendered = tt.render("url_input", &environment)?;
 
-    if !environment.remainder.is_empty() {
-        url.set_path(&format!(
-            "{}/{}",
-            url.path().trim_end_matches('/'),
-            environment.remainder.join("/")
-        ));
+    // If rendering didn't result in a different output, assume there is no render
+    // syntax in our long value, and append the incoming remainder path onto the
+    // expanded URL's path
+    if input == rendered {
+        let mut url = Url::parse(input)?;
+
+        if !environment.path.is_empty() {
+            url.set_path(&vec![url.path().trim_end_matches('/'), &environment.path].join("/"));
+        }
+
+        Ok(url.to_string())
+    } else {
+        let url = Url::parse(&rendered)?;
+        Ok(url.to_string())
     }
-
-    url.to_string()
 }
 
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum GolinkError {
-    #[error("Input unable to be parsed as URL")]
+    #[error("String could not be parsed as URL")]
     UrlParseError(#[from] ParseError),
+
+    #[error("Could not pull path segments from the input value")]
+    InvalidInputUrl,
 
     #[error("No first path segment")]
     NoFirstPathSegment,
+
+    #[error("Could not parse template correctly")]
+    ImproperTemplate(String),
+}
+
+impl From<tinytemplate::error::Error> for GolinkError {
+    fn from(tt_error: tinytemplate::error::Error) -> Self {
+        GolinkError::ImproperTemplate(tt_error.to_string())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +138,7 @@ pub fn resolve(
     lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Result<GolinkResolution, GolinkError> {
     let url = Url::parse(input)?;
-    let mut segments = url.path_segments().unwrap();
+    let mut segments = url.path_segments().ok_or(GolinkError::InvalidInputUrl)?;
     let short = segments
         .next()
         .ok_or(GolinkError::NoFirstPathSegment)?
@@ -58,14 +155,16 @@ pub fn resolve(
         ));
     }
 
-    let remainder = segments.map(|s| s.to_owned()).collect_vec();
+    let remainder = segments.join("/");
 
     let lookup_value = lookup(&short);
 
-    Ok(GolinkResolution::RedirectRequest(expand(
+    let expansion = expand(
         &lookup_value.unwrap(),
-        ExpandEnvironment { remainder },
-    )))
+        ExpandEnvironment { path: remainder },
+    )?;
+
+    Ok(GolinkResolution::RedirectRequest(expansion))
 }
 
 #[cfg(test)]
@@ -79,6 +178,9 @@ mod tests {
         }
         if input == "test2" {
             return Some("http://example.com/test.html?a=b&c[]=d".to_string());
+        }
+        if input == "prs" {
+            return Some("https://github.com/pulls?q=is:open+is:pr+review-requested:{{ if path }}{ path }{{ else }}@me{{ endif }}+archived:false".to_string());
         }
         None
     }
@@ -165,5 +267,47 @@ mod tests {
                 "http://example.com/test.html/a/b/c?a=b&c[]=d".to_string()
             ))
         )
+    }
+
+    #[test]
+    fn it_uses_path_in_template() {
+        let computed = resolve("http://go/prs/jameslittle230", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "https://github.com/pulls?q=is:open+is:pr+review-requested:jameslittle230+archived:false".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_uses_fallback_in_template() {
+        let computed = resolve("http://go/prs", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "https://github.com/pulls?q=is:open+is:pr+review-requested:@me+archived:false"
+                    .to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_uses_fallback_in_template_with_trailing_slash() {
+        let computed = resolve("http://go/prs/", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "https://github.com/pulls?q=is:open+is:pr+review-requested:@me+archived:false"
+                    .to_string()
+            ))
+        )
+    }
+
+    #[test]
+    #[ignore = "TBD"]
+    fn it_fails_with_invalid_input_url() {
+        let computed = resolve("http://go/", &lookup);
+        assert_eq!(computed, Err(GolinkError::InvalidInputUrl))
     }
 }
