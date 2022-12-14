@@ -8,8 +8,17 @@ struct ExpandEnvironment {
 }
 
 fn expand(input: &str, environment: ExpandEnvironment) -> String {
-    dbg!(environment);
-    input.to_string()
+    let mut url = Url::parse(input).unwrap();
+
+    if !environment.remainder.is_empty() {
+        url.set_path(&format!(
+            "{}/{}",
+            url.path().trim_end_matches('/'),
+            environment.remainder.join("/")
+        ));
+    }
+
+    url.to_string()
 }
 
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,10 +71,14 @@ pub fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn lookup(input: &str) -> Option<String> {
         if input == "test" {
             return Some("http://example.com".to_string());
+        }
+        if input == "test2" {
+            return Some("http://example.com/test.html?a=b&c[]=d".to_string());
         }
         None
     }
@@ -76,7 +89,18 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com".to_string()
+                "http://example.com/".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_works_for_google_maps_url() {
+        let computed = resolve("http://go/test2", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com/test.html?a=b&c[]=d".to_string()
             ))
         )
     }
@@ -87,7 +111,7 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com".to_string()
+                "http://example.com/".to_string()
             ))
         )
     }
@@ -98,7 +122,7 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com".to_string()
+                "http://example.com/".to_string()
             ))
         )
     }
@@ -109,6 +133,37 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::MetadataRequest("test".to_string()))
+        )
+    }
+
+    #[test]
+    fn it_returns_correct_metadata_request_with_hyphens() {
+        let computed = resolve("http://go/tEs-t+", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::MetadataRequest("test".to_string()))
+        )
+    }
+
+    #[test]
+    fn it_appends_remaining_path_segments() {
+        let computed = resolve("http://go/test/a/b/c", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com/a/b/c".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_appends_remaining_path_segments_for_maps_url() {
+        let computed = resolve("http://go/test2/a/b/c", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com/test.html/a/b/c?a=b&c[]=d".to_string()
+            ))
         )
     }
 }
