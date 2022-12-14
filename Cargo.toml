@@ -2,6 +2,11 @@
 name = "golink"
 version = "0.1.0"
 edition = "2021"
+authors = ["James Little <littleguy23@gmail.com>"]
+description = "Shortlink expansion engine supporting normalization, path appending, and templating"
+repository = "https://github.com/jameslittle230/golink"
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
 
 [dependencies]
 itertools = "0.10.5"
