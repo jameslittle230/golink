@@ -119,6 +119,9 @@ pub enum GolinkError {
 
     #[error("Could not parse template correctly")]
     ImproperTemplate(String),
+
+    #[error("Key {0} not found in lookup function")]
+    NotFound(String),
 }
 
 impl From<tinytemplate::error::Error> for GolinkError {
@@ -157,12 +160,9 @@ pub fn resolve(
 
     let remainder = segments.join("/");
 
-    let lookup_value = lookup(&short);
+    let lookup_value = lookup(&short).ok_or_else(|| GolinkError::NotFound(short.clone()))?;
 
-    let expansion = expand(
-        &lookup_value.unwrap(),
-        ExpandEnvironment { path: remainder },
-    )?;
+    let expansion = expand(&lookup_value, ExpandEnvironment { path: remainder })?;
 
     Ok(GolinkResolution::RedirectRequest(expansion))
 }
