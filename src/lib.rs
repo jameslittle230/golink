@@ -55,14 +55,14 @@
 //!     None
 //! }
 //!
-//! let resolved = golink::resolve("http://go/foo", &lookup)
+//! let resolved = golink::resolve("foo", &lookup);
 //!
-//! match computed {
-//!    Ok(GolinkResolution::RedirectRequest(url)) => {
+//! match resolved {
+//!    Ok(golink::GolinkResolution::RedirectRequest(url)) => {
 //!        // Redirect to `url`
 //!    }
 //!
-//!    Ok(GolinkResolution::MetadataRequest(key)) => {
+//!    Ok(golink::GolinkResolution::MetadataRequest(key)) => {
 //!        // `key` is the original shortlink.
 //!        // Return JSON that displays metadata/analytics about `key`
 //!    }
@@ -90,7 +90,7 @@ fn expand(input: &str, environment: ExpandEnvironment) -> Result<String, GolinkE
     let rendered = tt.render("url_input", &environment)?;
 
     // If rendering didn't result in a different output, assume there is no render
-    // syntax in our long value, and append the incoming remainder path onto the
+    // syntax in our long value and instead append the incoming remainder path onto the
     // expanded URL's path
     if input == rendered {
         let mut url = Url::parse(input)?;
@@ -140,13 +140,19 @@ pub fn resolve(
     input: &str,
     lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Result<GolinkResolution, GolinkError> {
-    let url = Url::parse(input)?;
+    let url_input = format!("https://go/{input}");
+    let url = Url::parse(input).or_else(|_| Url::parse(&url_input))?;
     let mut segments = url.path_segments().ok_or(GolinkError::InvalidInputUrl)?;
     let short = segments
         .next()
         .ok_or(GolinkError::NoFirstPathSegment)?
         .to_ascii_lowercase()
-        .replace('-', "");
+        .replace('-', "")
+        .replace("%20", "");
+
+    if short.is_empty() {
+        return Err(GolinkError::NoFirstPathSegment);
+    }
 
     if {
         let this = &url.path().chars().last();
@@ -187,7 +193,18 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let computed = resolve("http://go/test", &lookup);
+        let computed = resolve("test", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com/".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_works_with_url() {
+        let computed = resolve("https://jil.im/test", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -198,7 +215,7 @@ mod tests {
 
     #[test]
     fn it_works_for_google_maps_url() {
-        let computed = resolve("http://go/test2", &lookup);
+        let computed = resolve("test2", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -209,7 +226,7 @@ mod tests {
 
     #[test]
     fn it_ignores_case() {
-        let computed = resolve("http://go/TEST", &lookup);
+        let computed = resolve("TEST", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -220,7 +237,18 @@ mod tests {
 
     #[test]
     fn it_ignores_hyphens() {
-        let computed = resolve("http://go/t-est", &lookup);
+        let computed = resolve("t-est", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com/".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    fn it_ignores_whitespace() {
+        let computed = resolve("t est", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -231,7 +259,7 @@ mod tests {
 
     #[test]
     fn it_returns_metadata_request() {
-        let computed = resolve("http://go/test+", &lookup);
+        let computed = resolve("test+", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::MetadataRequest("test".to_string()))
@@ -240,7 +268,7 @@ mod tests {
 
     #[test]
     fn it_returns_correct_metadata_request_with_hyphens() {
-        let computed = resolve("http://go/tEs-t+", &lookup);
+        let computed = resolve("tEs-t+", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::MetadataRequest("test".to_string()))
@@ -249,7 +277,7 @@ mod tests {
 
     #[test]
     fn it_appends_remaining_path_segments() {
-        let computed = resolve("http://go/test/a/b/c", &lookup);
+        let computed = resolve("test/a/b/c", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -260,7 +288,7 @@ mod tests {
 
     #[test]
     fn it_appends_remaining_path_segments_for_maps_url() {
-        let computed = resolve("http://go/test2/a/b/c", &lookup);
+        let computed = resolve("test2/a/b/c", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -271,7 +299,7 @@ mod tests {
 
     #[test]
     fn it_uses_path_in_template() {
-        let computed = resolve("http://go/prs/jameslittle230", &lookup);
+        let computed = resolve("prs/jameslittle230", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -282,7 +310,7 @@ mod tests {
 
     #[test]
     fn it_uses_fallback_in_template() {
-        let computed = resolve("http://go/prs", &lookup);
+        let computed = resolve("prs", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -294,7 +322,7 @@ mod tests {
 
     #[test]
     fn it_uses_fallback_in_template_with_trailing_slash() {
-        let computed = resolve("http://go/prs/", &lookup);
+        let computed = resolve("prs/", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -305,9 +333,20 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TBD"]
     fn it_fails_with_invalid_input_url() {
-        let computed = resolve("http://go/", &lookup);
+        let computed = resolve("a:3gb", &lookup);
         assert_eq!(computed, Err(GolinkError::InvalidInputUrl))
+    }
+
+    #[test]
+    fn it_fails_with_empty_string() {
+        let computed = resolve("", &lookup);
+        assert_eq!(computed, Err(GolinkError::NoFirstPathSegment))
+    }
+
+    #[test]
+    fn it_fails_with_whitespace_only_string() {
+        let computed = resolve("  \n", &lookup);
+        assert_eq!(computed, Err(GolinkError::NoFirstPathSegment))
     }
 }
