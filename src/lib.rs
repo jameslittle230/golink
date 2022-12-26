@@ -55,7 +55,9 @@
 //!     None
 //! }
 //!
-//! let resolved = golink::resolve("foo", &lookup);
+//! let resolved = golink::resolve("/foo", &lookup);
+//!  //         or golink::resolve("foo", &lookup);
+//!  //         or golink::resolve("https://example.com/foo", &lookup);
 //!
 //! match resolved {
 //!    Ok(golink::GolinkResolution::RedirectRequest(url)) => {
@@ -140,8 +142,7 @@ pub fn resolve(
     input: &str,
     lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Result<GolinkResolution, GolinkError> {
-    let url_input = format!("https://go/{input}");
-    let url = Url::parse(input).or_else(|_| Url::parse(&url_input))?;
+    let url = Url::parse(input).or_else(|_| Url::parse("https://go/")?.join(input))?;
     let mut segments = url.path_segments().ok_or(GolinkError::InvalidInputUrl)?;
     let short = segments
         .next()
@@ -193,7 +194,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let computed = resolve("test", &lookup);
+        let computed = resolve("/test", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -214,8 +215,19 @@ mod tests {
     }
 
     #[test]
+    fn it_works_with_no_leading_slash() {
+        let computed = resolve("test", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "http://example.com/".to_string()
+            ))
+        )
+    }
+
+    #[test]
     fn it_works_for_google_maps_url() {
-        let computed = resolve("test2", &lookup);
+        let computed = resolve("/test2", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -226,7 +238,7 @@ mod tests {
 
     #[test]
     fn it_ignores_case() {
-        let computed = resolve("TEST", &lookup);
+        let computed = resolve("/TEST", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -237,7 +249,7 @@ mod tests {
 
     #[test]
     fn it_ignores_hyphens() {
-        let computed = resolve("t-est", &lookup);
+        let computed = resolve("/t-est", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -248,7 +260,7 @@ mod tests {
 
     #[test]
     fn it_ignores_whitespace() {
-        let computed = resolve("t est", &lookup);
+        let computed = resolve("/t est", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -259,7 +271,7 @@ mod tests {
 
     #[test]
     fn it_returns_metadata_request() {
-        let computed = resolve("test+", &lookup);
+        let computed = resolve("/test+", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::MetadataRequest("test".to_string()))
@@ -268,7 +280,7 @@ mod tests {
 
     #[test]
     fn it_returns_correct_metadata_request_with_hyphens() {
-        let computed = resolve("tEs-t+", &lookup);
+        let computed = resolve("/tEs-t+", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::MetadataRequest("test".to_string()))
@@ -277,7 +289,7 @@ mod tests {
 
     #[test]
     fn it_appends_remaining_path_segments() {
-        let computed = resolve("test/a/b/c", &lookup);
+        let computed = resolve("/test/a/b/c", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -288,7 +300,7 @@ mod tests {
 
     #[test]
     fn it_appends_remaining_path_segments_for_maps_url() {
-        let computed = resolve("test2/a/b/c", &lookup);
+        let computed = resolve("/test2/a/b/c", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -299,7 +311,7 @@ mod tests {
 
     #[test]
     fn it_uses_path_in_template() {
-        let computed = resolve("prs/jameslittle230", &lookup);
+        let computed = resolve("/prs/jameslittle230", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -310,7 +322,7 @@ mod tests {
 
     #[test]
     fn it_uses_fallback_in_template() {
-        let computed = resolve("prs", &lookup);
+        let computed = resolve("/prs", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
@@ -322,7 +334,7 @@ mod tests {
 
     #[test]
     fn it_uses_fallback_in_template_with_trailing_slash() {
-        let computed = resolve("prs/", &lookup);
+        let computed = resolve("/prs/", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
