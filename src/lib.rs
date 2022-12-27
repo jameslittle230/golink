@@ -60,8 +60,9 @@
 //!  //         or golink::resolve("https://example.com/foo", &lookup);
 //!
 //! match resolved {
-//!    Ok(golink::GolinkResolution::RedirectRequest(url)) => {
+//!    Ok(golink::GolinkResolution::RedirectRequest(url, shortname)) => {
 //!        // Redirect to `url`
+//!        // If you collect analytics, then increment the click count for shortname
 //!    }
 //!
 //!    Ok(golink::GolinkResolution::MetadataRequest(key)) => {
@@ -135,7 +136,7 @@ impl From<tinytemplate::error::Error> for GolinkError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GolinkResolution {
     MetadataRequest(String),
-    RedirectRequest(String),
+    RedirectRequest(String, String),
 }
 
 pub fn resolve(
@@ -171,7 +172,7 @@ pub fn resolve(
 
     let expansion = expand(&lookup_value, ExpandEnvironment { path: remainder })?;
 
-    Ok(GolinkResolution::RedirectRequest(expansion))
+    Ok(GolinkResolution::RedirectRequest(expansion, short))
 }
 
 #[cfg(test)]
@@ -189,6 +190,9 @@ mod tests {
         if input == "prs" {
             return Some("https://github.com/pulls?q=is:open+is:pr+review-requested:{{ if path }}{ path }{{ else }}@me{{ endif }}+archived:false".to_string());
         }
+        if input == "abcd" {
+            return Some("abcd".to_string());
+        }
         None
     }
 
@@ -198,7 +202,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/".to_string()
+                "http://example.com/".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -209,7 +214,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/".to_string()
+                "http://example.com/".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -220,7 +226,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/".to_string()
+                "http://example.com/".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -231,7 +238,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/test.html?a=b&c[]=d".to_string()
+                "http://example.com/test.html?a=b&c[]=d".to_string(),
+                "test2".to_string()
             ))
         )
     }
@@ -242,7 +250,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/".to_string()
+                "http://example.com/".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -253,7 +262,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/".to_string()
+                "http://example.com/".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -264,7 +274,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/".to_string()
+                "http://example.com/".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -293,7 +304,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/a/b/c".to_string()
+                "http://example.com/a/b/c".to_string(),
+                "test".to_string()
             ))
         )
     }
@@ -304,7 +316,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "http://example.com/test.html/a/b/c?a=b&c[]=d".to_string()
+                "http://example.com/test.html/a/b/c?a=b&c[]=d".to_string(),
+                "test2".to_string()
             ))
         )
     }
@@ -315,7 +328,8 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "https://github.com/pulls?q=is:open+is:pr+review-requested:jameslittle230+archived:false".to_string()
+                "https://github.com/pulls?q=is:open+is:pr+review-requested:jameslittle230+archived:false".to_string(),
+                "prs".to_string()
             ))
         )
     }
@@ -327,7 +341,8 @@ mod tests {
             computed,
             Ok(GolinkResolution::RedirectRequest(
                 "https://github.com/pulls?q=is:open+is:pr+review-requested:@me+archived:false"
-                    .to_string()
+                    .to_string(),
+                "prs".to_string()
             ))
         )
     }
@@ -339,7 +354,21 @@ mod tests {
             computed,
             Ok(GolinkResolution::RedirectRequest(
                 "https://github.com/pulls?q=is:open+is:pr+review-requested:@me+archived:false"
-                    .to_string()
+                    .to_string(),
+                "prs".to_string()
+            ))
+        )
+    }
+
+    #[test]
+    #[ignore = "doesn't work yet"]
+    fn it_allows_the_long_url_to_not_be_a_valid_url() {
+        let computed = resolve("/abcd", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "abcd".to_string(),
+                "abcd".to_string()
             ))
         )
     }
