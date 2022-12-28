@@ -96,17 +96,17 @@ fn expand(input: &str, environment: ExpandEnvironment) -> Result<String, GolinkE
     // syntax in our long value and instead append the incoming remainder path onto the
     // expanded URL's path
     if input == rendered {
-        let mut url = Url::parse(input)?;
+        if let Some(mut url) = Url::parse(input).ok() {
+            if !environment.path.is_empty() {
+                url.set_path(&vec![url.path().trim_end_matches('/'), &environment.path].join("/"));
+            }
 
-        if !environment.path.is_empty() {
-            url.set_path(&vec![url.path().trim_end_matches('/'), &environment.path].join("/"));
+            return Ok(url.to_string());
+        } else {
+            return Ok(format!("{rendered}/{}", environment.path));
         }
-
-        Ok(url.to_string())
-    } else {
-        let url = Url::parse(&rendered)?;
-        Ok(url.to_string())
     }
+    return Ok(rendered);
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -182,7 +182,7 @@ mod tests {
 
     fn lookup(input: &str) -> Option<String> {
         if input == "test" {
-            return Some("http://example.com".to_string());
+            return Some("http://example.com/".to_string());
         }
         if input == "test2" {
             return Some("http://example.com/test.html?a=b&c[]=d".to_string());
@@ -191,7 +191,7 @@ mod tests {
             return Some("https://github.com/pulls?q=is:open+is:pr+review-requested:{{ if path }}{ path }{{ else }}@me{{ endif }}+archived:false".to_string());
         }
         if input == "abcd" {
-            return Some("abcd".to_string());
+            return Some("efgh".to_string());
         }
         None
     }
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn it_works_for_google_maps_url() {
+    fn it_works_for_complex_url() {
         let computed = resolve("/test2", &lookup);
         assert_eq!(
             computed,
@@ -295,6 +295,18 @@ mod tests {
         assert_eq!(
             computed,
             Ok(GolinkResolution::MetadataRequest("test".to_string()))
+        )
+    }
+
+    #[test]
+    fn it_does_not_append_remaining_path_segments_with_invalid_resolved_url() {
+        let computed = resolve("/abcd/a/b/c", &lookup);
+        assert_eq!(
+            computed,
+            Ok(GolinkResolution::RedirectRequest(
+                "efgh/a/b/c".to_string(),
+                "abcd".to_string()
+            ))
         )
     }
 
@@ -361,13 +373,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "doesn't work yet"]
     fn it_allows_the_long_url_to_not_be_a_valid_url() {
         let computed = resolve("/abcd", &lookup);
         assert_eq!(
             computed,
             Ok(GolinkResolution::RedirectRequest(
-                "abcd".to_string(),
+                "efgh".to_string(),
                 "abcd".to_string()
             ))
         )
